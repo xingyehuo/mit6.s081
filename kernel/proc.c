@@ -127,6 +127,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  p->syscall_trace = 0;
+
   return p;
 }
 
@@ -276,6 +278,8 @@ fork(void)
   np->sz = p->sz;
 
   np->parent = p;
+
+  np->syscall_trace = p->syscall_trace;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
