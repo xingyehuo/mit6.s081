@@ -697,3 +697,17 @@ procdump(void)
     printf("\n");
   }
 }
+
+uint64
+proc_livenum(void)
+{
+  uint64 count = 0;
+  for (struct proc *p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if (p->state != UNUSED) {
+      count++;
+    }
+    release(&p->lock);
+  }
+  return count;
+}
