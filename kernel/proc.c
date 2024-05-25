@@ -113,6 +113,18 @@ found:
     return 0;
   }
 
+  // kernal pagetable with process's own kernel stack
+  p->kpagetable = ukvminit();
+  if (p->kpagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+
+  uint64 va = KSTACK((int)(p - proc));
+  ukvmmap(p->kpagetable, va, kvmpa(va), PGSIZE, PTE_R | PTE_W);
+
+
   // An empty user page table.
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
@@ -142,6 +154,10 @@ freeproc(struct proc *p)
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
+  if (p->kpagetable) {
+    kfreewalk(p->kpagetable);
+  }
+
   p->sz = 0;
   p->pid = 0;
   p->parent = 0;
@@ -221,6 +237,8 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  copy_mappings(p->pagetable, p->kpagetable, 0, p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -243,10 +261,15 @@ growproc(int n)
 
   sz = p->sz;
   if(n > 0){
+
+    if ((sz + n) > PLIC) return -1;
+
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    copy_mappings(p->pagetable, p->kpagetable, p->sz, sz);
   } else if(n < 0){
+    free_mappings(p->kpagetable, sz + n, sz);
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
@@ -276,6 +299,8 @@ fork(void)
   np->sz = p->sz;
 
   np->parent = p;
+
+  copy_mappings(np->pagetable, np->kpagetable, 0, p->sz);
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -473,6 +498,10 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
+
         swtch(&c->context, &p->context);
 
         // Process is done running for now.
@@ -480,6 +509,8 @@ scheduler(void)
         c->proc = 0;
 
         found = 1;
+
+        kvminithart();
       }
       release(&p->lock);
     }
